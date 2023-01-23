@@ -85,6 +85,7 @@ void app_main()
      * Otherwise there can be problem such as memory corruption and so on.
      * NOTE: When not using Wi-Fi nor Bluetooth you can pin the guiTask to core 0 */
     xTaskCreatePinnedToCore(guiTask, "gui", 4096 * 2, NULL, 0, NULL, 1);
+    SD_test();
 }
 
 /* Creates a semaphore to handle concurrent call to lvgl stuff
@@ -103,7 +104,6 @@ static void guiTask(void *pvParameter)
     /* Initialize SPI or I2C bus used by the drivers */
     lvgl_driver_init();
 
-    SD_test();
 
     lv_color_t *buf1 = heap_caps_malloc(DISP_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
     assert(buf1 != NULL);
@@ -442,7 +442,7 @@ bool SD_init()
     ESP_LOGI(TAG, "Filesystem mounted");
 
     // Card has been initialized, print its properties
-    sdmmc_card_print_info(stdout, sdcard);
+    sdmmc_card_print_info(stdout, card);
 
     // Use POSIX and C standard library functions to work with files.
 
