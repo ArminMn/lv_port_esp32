@@ -20,6 +20,23 @@
 #include "esp_system.h"
 #include "driver/gpio.h"
 
+// SD card
+#include <sys/unistd.h>
+#include <sys/stat.h>
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+
+#define PIN_NUM_MISO 27
+#define PIN_NUM_MOSI 26
+#define PIN_NUM_CLK 25
+#define PIN_NUM_CS 12
+#define MOUNT_POINT "/sdcard"
+bool is_sd_init = false;
+
+bool SD_init();
+bool SD_insert(char *data);
+void SD_test();
+
 /* Littlevgl specific */
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
 #include "lvgl.h"
@@ -59,7 +76,10 @@ static void create_demo_application(void);
 /**********************
  *   APPLICATION MAIN
  **********************/
+char *data = "test 2 \n";
+
 void app_main() {
+
 
     /* If you want to use a task to create the graphic, you NEED to create a Pinned task
      * Otherwise there can be problem such as memory corruption and so on.
@@ -81,6 +101,8 @@ static void guiTask(void *pvParameter) {
 
     /* Initialize SPI or I2C bus used by the drivers */
     lvgl_driver_init();
+    
+    SD_test();
 
     lv_color_t* buf1 = heap_caps_malloc(DISP_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
     assert(buf1 != NULL);
@@ -211,4 +233,117 @@ static void lv_tick_task(void *arg) {
     (void) arg;
 
     lv_tick_inc(LV_TICK_PERIOD_MS);
+}
+
+bool SD_init()
+{
+    esp_err_t ret;
+
+    // Options for mounting the filesystem.
+    // If format_if_mount_failed is set to true, SD card will be partitioned and
+    // formatted in case when mounting fails.
+    esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+#ifdef CONFIG_EXAMPLE_FORMAT_IF_MOUNT_FAILED
+        .format_if_mount_failed = true,
+#else
+        .format_if_mount_failed = false,
+#endif // EXAMPLE_FORMAT_IF_MOUNT_FAILED
+        .max_files = 5,
+        .allocation_unit_size = 16 * 1024};
+    sdmmc_card_t *card;
+    const char mount_point[] = MOUNT_POINT;
+    ESP_LOGI(TAG, "Initializing SD card");
+
+    // Use settings defined above to initialize SD card and mount FAT filesystem.
+    // Note: esp_vfs_fat_sdmmc/sdspi_mount is all-in-one convenience functions.
+    // Please check its source code and implement error recovery when developing
+    // production applications.
+    ESP_LOGI(TAG, "Using SPI peripheral");
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    /*
+        max_freq_khz = 20MHz
+        sdspi_host_init_device() to attach and initialize an SD SPI device on the specific SPI bus.
+    */
+    host.max_freq_khz = 10000; // Max frequency of 20MHz will result in: Failed to initialize the card (ESP_ERR_INVALID_RESPONSE). Make sure SD card lines have pull-up resistors in place.
+
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = PIN_NUM_MOSI,
+        .miso_io_num = PIN_NUM_MISO,
+        .sclk_io_num = PIN_NUM_CLK,
+        .quadwp_io_num = -1, // Write Protect
+        .quadhd_io_num = -1, // GPIO pin for HD (Hold) signal
+        .max_transfer_sz = 4000,
+    };
+
+    ret = spi_bus_initialize(host.slot, &bus_cfg, SDSPI_DEFAULT_DMA); // SDSPI_DEFAULT_DMA
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to initialize bus.");
+        return;
+    }
+
+    // This initializes the slot without card detect (CD) and write protect (WP) signals.
+    // Modify slot_config.gpio_cd and slot_config.gpio_wp if your board has these signals.
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = PIN_NUM_CS;
+    slot_config.host_id = host.slot;
+
+    ESP_LOGI(TAG, "Mounting filesystem");
+    ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
+
+    if (ret != ESP_OK)
+    {
+        if (ret == ESP_FAIL)
+        {
+            ESP_LOGE(TAG, "Failed to mount filesystem. "
+                          "If you want the card to be formatted, set the CONFIG_EXAMPLE_FORMAT_IF_MOUNT_FAILED menuconfig option.");
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to initialize the card (%s). "
+                          "Make sure SD card lines have pull-up resistors in place.",
+                     esp_err_to_name(ret));
+        }
+        return;
+    }
+    ESP_LOGI(TAG, "Filesystem mounted");
+
+    // Card has been initialized, print its properties
+    sdmmc_card_print_info(stdout, card);
+
+    // Use POSIX and C standard library functions to work with files.
+
+    is_sd_init = true;
+
+    return true;
+}
+
+bool SD_insert(char *data)
+{
+    const char *log_file = MOUNT_POINT "/Log.txt"; // First create a file.
+
+    ESP_LOGI(TAG, "Opening file %s", log_file);
+    FILE *f = fopen(log_file, "a");
+
+    if (f == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to open file for writing");
+        return;
+    }
+
+    fprintf(f, "Sent command: %s\n", (const char *)data);
+    fclose(f);
+    ESP_LOGI(TAG, "File written");
+
+    // TODO:
+    // Check if it failed
+
+    return 1;
+}
+
+void SD_test()
+{
+    bool test = SD_init();
+    bool test2 = SD_insert(data);
 }
